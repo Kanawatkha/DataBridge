@@ -1,5 +1,6 @@
 import { parseArgs, printUsage, type ParsedArgs } from "./cli/args";
 import { logger } from "./logging/logger";
+import { loadAllConfigs } from "./config";
 
 const APP_VERSION = "1.0.0";
 
@@ -31,13 +32,16 @@ function main() {
     // 3. Handle Configuration and bootstrapping migration (Phase 2+)
     if (parsed.config) {
       logger.info(`Starting DataBridge v${APP_VERSION}`);
-      logger.info(`Configuration file specified: ${parsed.config}`);
       
-      // Bootstrapping note
-      logger.info("Initializing system and verifying runtime environments...");
+      logger.info(`Loading configurations using: ${parsed.config}`);
+      const config = loadAllConfigs(parsed.config);
       
-      // In Phase 1, we stop here as configuration loading is handled in Phase 2.
-      logger.info("Phase 1 initialization completed successfully.");
+      logger.info("Configuration files loaded and validated successfully.");
+      logger.info(`Source Table: ${config.task.source.database}.${config.task.source.table} (${config.env.sourceDbType})`);
+      logger.info(`Target Table: ${config.task.target.database}.${config.task.target.table} (${config.env.targetDbType})`);
+      logger.info(`Write Mode: ${config.env.writeMode}`);
+      
+      logger.info("Phase 2 initialization completed successfully.");
       return;
     }
 
