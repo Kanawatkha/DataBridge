@@ -1,5 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { MySqlAdapter } from "./mysql-adapter";
+import { PostgresAdapter } from "./postgres-adapter";
+import { MssqlAdapter } from "./mssql-adapter";
 import { createDatabaseAdapter } from "./adapter-factory";
 
 describe("MySqlAdapter Named Parameter Translation", () => {
@@ -44,13 +46,17 @@ describe("AdapterFactory", () => {
     const adapter = createDatabaseAdapter("mysql", { host: "127.0.0.1" });
     expect(adapter).toBeInstanceOf(MySqlAdapter);
   });
+  it("should create correct adapters for each dbType", () => {
+    const pg = createDatabaseAdapter("postgresql", {});
+    expect(pg).toBeInstanceOf(PostgresAdapter);
 
-  it("should throw error for unimplemented dbTypes", () => {
-    expect(() => createDatabaseAdapter("postgresql", {})).toThrow(
-      "PostgreSQL database type is not implemented yet"
-    );
-    expect(() => createDatabaseAdapter("mssql", {})).toThrow(
-      "MSSQL database type is not implemented yet"
+    const mssql = createDatabaseAdapter("mssql", {});
+    expect(mssql).toBeInstanceOf(MssqlAdapter);
+  });
+
+  it("should throw error for unsupported dbTypes", () => {
+    expect(() => createDatabaseAdapter("oracle" as any, {})).toThrow(
+      "Unsupported database type"
     );
   });
 });

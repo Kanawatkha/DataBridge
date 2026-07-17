@@ -1,4 +1,6 @@
 import { MySqlAdapter } from "./mysql-adapter";
+import { PostgresAdapter } from "./postgres-adapter";
+import { MssqlAdapter } from "./mssql-adapter";
 import type { IDatabaseAdapter } from "./database-adapter.interface";
 import type { DbType } from "../config/env-config";
 
@@ -13,9 +15,9 @@ export function createDatabaseAdapter(type: DbType, options: any): IDatabaseAdap
     case "mysql":
       return new MySqlAdapter(options);
     case "postgresql":
-      throw new Error(`PostgreSQL database type is not implemented yet (scheduled for Phase 7).`);
+      return new PostgresAdapter(options);
     case "mssql":
-      throw new Error(`MSSQL database type is not implemented yet (scheduled for Phase 7).`);
+      return new MssqlAdapter(options);
     default:
       throw new Error(`Unsupported database type: ${type}`);
   }
