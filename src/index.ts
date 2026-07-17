@@ -1,10 +1,11 @@
 import { parseArgs, printUsage, type ParsedArgs } from "./cli/args";
 import { logger } from "./logging/logger";
 import { loadAllConfigs } from "./config";
+import { MigrationExecutor } from "./core";
 
 const APP_VERSION = "1.0.0";
 
-function main() {
+async function main() {
   try {
     const rawArgs = process.argv.slice(2);
     let parsed: ParsedArgs;
@@ -41,7 +42,11 @@ function main() {
       logger.info(`Target Table: ${config.task.target.database}.${config.task.target.table} (${config.env.targetDbType})`);
       logger.info(`Write Mode: ${config.env.writeMode}`);
       
-      logger.info("Phase 2 initialization completed successfully.");
+      logger.info("Initializing migration execution...");
+      const executor = new MigrationExecutor(config);
+      await executor.execute();
+      
+      logger.info("DataBridge execution completed successfully.");
       return;
     }
 
