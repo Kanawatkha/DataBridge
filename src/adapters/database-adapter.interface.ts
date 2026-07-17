@@ -69,4 +69,13 @@ export interface IDatabaseAdapter {
    * @param conditions Array of conditions containing column, operator, and literal values
    */
   deleteRows(tableName: string, conditions: ConditionConfig[]): Promise<void>;
+
+  /**
+   * Performs bulk upserts (insert-or-update) within the active transaction.
+   *
+   * @param tableName The target table to upsert into
+   * @param rows Array of objects representing the row data (key-value pairs matching column names)
+   * @param upsertKeys Key column(s) used to check for duplicate/existing records
+   */
+  upsertBatch(tableName: string, rows: any[], upsertKeys: string[]): Promise<void>;
 }

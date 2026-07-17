@@ -252,6 +252,40 @@ export class MySqlAdapter implements IDatabaseAdapter {
     }
   }
 
+  async upsertBatch(tableName: string, rows: any[], upsertKeys: string[]): Promise<void> {
+    if (!this.txConnection) {
+      throw new Error("MySQL upsertBatch must be called within an active transaction.");
+    }
+    if (rows.length === 0) return;
+
+    try {
+      const columns = Object.keys(rows[0]);
+      const quotedColumns = columns.map((col) => `\`${col}\``).join(", ");
+      const rowPlaceholder = `(${columns.map(() => "?").join(", ")})`;
+      const allPlaceholders = rows.map(() => rowPlaceholder).join(", ");
+
+      // Update all columns except the ones that are part of the unique key
+      const updateColumns = columns.filter((col) => !upsertKeys.includes(col));
+      
+      let updateClause = "";
+      if (updateColumns.length > 0) {
+        updateClause = "ON DUPLICATE KEY UPDATE " + updateColumns
+          .map((col) => `\`${col}\` = VALUES(\`${col}\`)`)
+          .join(", ");
+      } else {
+        // Fallback if all columns are keys: set the first key equal to itself
+        updateClause = `ON DUPLICATE KEY UPDATE \`${upsertKeys[0]}\` = \`${upsertKeys[0]}\``;
+      }
+
+      const sql = `INSERT INTO \`${tableName}\` (${quotedColumns}) VALUES ${allPlaceholders} ${updateClause}`;
+      const values = rows.flatMap((row) => columns.map((col) => row[col]));
+
+      await this.txConnection.execute(sql, values);
+    } catch (error: any) {
+      throw new Error(`MySQL upsertBatch failed for table ${tableName}: ${error.message}`);
+    }
+  }
+
   /**
    * Helper to translate named params (:paramName) to positional params (?)
    * and align values order correctly for node-mysql2 execution.

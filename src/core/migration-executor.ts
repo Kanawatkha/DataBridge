@@ -1,6 +1,7 @@
 import { logger } from "../logging/logger";
 import { createDatabaseAdapter } from "../adapters/adapter-factory";
 import { PrecheckValidator } from "./precheck-validator";
+import { ParamResolver } from "./param-resolver";
 import type { IDatabaseAdapter } from "../adapters/database-adapter.interface";
 import type { DataBridgeConfig } from "../config";
 
@@ -48,18 +49,26 @@ export class MigrationExecutor {
       await this.targetAdapter.beginTransaction();
       isTransactionActive = true;
 
-      // 4. Execute basic write mode deletion steps
+      // 4. Execute write mode deletion steps
       if (env.writeMode === "truncateThenInsert") {
         logger.info(`Executing truncate-clean (safe DELETE) on target table: ${task.target.table}`);
         await this.targetAdapter.deleteRows(task.target.table, []);
         logger.info("Target table cleared successfully.");
       } else if (env.writeMode === "deleteThenInsert") {
-        logger.warn(`Write mode "${env.writeMode}" delete execution will be finalized in Phase 5. Skipping delete step.`);
+        logger.info(`Resolving delete condition parameters for write mode "${env.writeMode}"...`);
+        const resolvedConditions = ParamResolver.resolveDeleteConditions(
+          task.target.deleteCondition?.conditions || [],
+          task.source.params || []
+        );
+        logger.info(`Executing scoped DELETE on target table: ${task.target.table}`);
+        await this.targetAdapter.deleteRows(task.target.table, resolvedConditions);
+        logger.info("Target scoped rows deleted successfully.");
       }
 
-      // 5. Stream and migrate rows (Basic batch insert loop for Phase 4)
-      logger.info(`Querying source data and streaming... (Batch size: ${env.batchSize})`);
+      // 5. Stream and migrate rows with Batch Concurrency throttling
+      logger.info(`Querying source data and streaming... (Batch size: ${env.batchSize}, Concurrency limit: ${env.batchConcurrencyLimit})`);
       let totalMigratedRows = 0;
+      const activePromises = new Set<Promise<void>>();
 
       totalMigratedRows = await this.sourceAdapter.streamQuery(
         task.source.query,
@@ -68,17 +77,41 @@ export class MigrationExecutor {
         async (rows) => {
           logger.debug(`Received batch of ${rows.length} rows from source.`);
 
-          if (env.writeMode === "insertOnly" || env.writeMode === "truncateThenInsert") {
-            logger.debug(`Writing batch of ${rows.length} rows to target table ${task.target.table}...`);
-            await this.targetAdapter.insertBatch(task.target.table, rows);
-            logger.info(`Successfully migrated batch of ${rows.length} rows.`);
+          let writePromise: Promise<void>;
+
+          if (env.writeMode === "upsert") {
+            logger.debug(`Upserting batch of ${rows.length} rows to target table ${task.target.table}...`);
+            writePromise = this.targetAdapter.upsertBatch(task.target.table, rows, task.target.upsertKeys || []);
           } else {
-            logger.warn(
-              `Batch of ${rows.length} rows received, but write mode "${env.writeMode}" is not fully implemented in Phase 4. Skipping batch insertion.`
-            );
+            logger.debug(`Inserting batch of ${rows.length} rows to target table ${task.target.table}...`);
+            writePromise = this.targetAdapter.insertBatch(task.target.table, rows);
+          }
+
+          const wrappedPromise = writePromise
+            .then(() => {
+              logger.info(`Successfully processed batch of ${rows.length} rows.`);
+              activePromises.delete(wrappedPromise);
+            })
+            .catch((err) => {
+              activePromises.delete(wrappedPromise);
+              throw err;
+            });
+
+          activePromises.add(wrappedPromise);
+
+          if (activePromises.size >= env.batchConcurrencyLimit) {
+            logger.debug(`Concurrency limit reached (${activePromises.size}/${env.batchConcurrencyLimit}). Throttling stream...`);
+            // Wait for at least one active write to finish before returning (applies backpressure to streamQuery)
+            await Promise.race(activePromises);
           }
         }
       );
+
+      // Await all remaining writes in progress before committing
+      if (activePromises.size > 0) {
+        logger.info(`Awaiting ${activePromises.size} remaining batch writes to complete...`);
+        await Promise.all(activePromises);
+      }
 
       // 6. Commit transaction
       logger.info("Committing target database transaction...");
