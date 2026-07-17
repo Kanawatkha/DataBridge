@@ -45,6 +45,7 @@ DataBridge-v1.0.0/
 | `SOURCE_DB_CONNECTION_LIMIT` | ตัวเลขจำนวน (เริ่มต้น: 5) | จำนวนช่องทางเชื่อมต่อสูงสุดของต้นทาง (Connection Pool Limit) |
 | `TARGET_DB_TYPE` / `HOST` / `PORT` / `USER` / `PASSWORD` | เหมือนด้านบน | ข้อมูลการเชื่อมต่อฝั่งปลายทาง (Target) |
 | `TARGET_DB_CONNECTION_LIMIT` | ตัวเลขจำนวน (เริ่มต้น: 5) | จำนวนช่องทางเชื่อมต่อสูงสุดของปลายทาง (Connection Pool Limit) |
+| `CONFIG_FILE_PATH` | พาธไฟล์ (เริ่มต้น: ./config.json) | พาธมาตรฐานของไฟล์กําหนดงาน (ใช้กรณีรันแบบไม่ระบุ --config) |
 | `WRITE_MODE` | `insertOnly`, `deleteThenInsert`, `upsert`, `truncateThenInsert` | โหมดการเขียนข้อมูลปลายทาง (ดูรายละเอียดบทที่ 5) |
 | `BATCH_SIZE` | ตัวเลขจำนวนแถว (เริ่มต้น: 500) | จำนวนข้อมูลที่จะสตรีมและบันทึกต่อรอบ |
 | `MAX_RETRIES` | ตัวเลขจำนวนรอบ (เริ่มต้น: 5) | จำนวนรอบที่จะลองทำซ้ำเมื่อเกิดการเชื่อมต่อขาดหาย |
