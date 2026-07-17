@@ -2,6 +2,7 @@ import { logger } from "../logging/logger";
 import { createDatabaseAdapter } from "../adapters/adapter-factory";
 import { PrecheckValidator } from "./precheck-validator";
 import { ParamResolver } from "./param-resolver";
+import { RetryHandler } from "./retry-handler";
 import type { IDatabaseAdapter } from "../adapters/database-adapter.interface";
 import type { DataBridgeConfig } from "../config";
 
@@ -34,25 +35,77 @@ export class MigrationExecutor {
     const { env, task } = this.config;
     let isTransactionActive = false;
 
+    // Graceful Shutdown Signal Handler
+    const signalHandler = async () => {
+      logger.warn("SIGINT/SIGTERM signal received. Initiating graceful shutdown...");
+      if (isTransactionActive) {
+        logger.warn("Aborting migration: Attempting transaction rollback...");
+        try {
+          await this.targetAdapter.rollback();
+          logger.info("Rollback executed successfully on signal.");
+        } catch (err: any) {
+          logger.error(`Rollback on signal failed: ${err.message}`);
+        }
+      }
+      logger.info("Closing database pools on signal...");
+      try {
+        await this.sourceAdapter.disconnect();
+        await this.targetAdapter.disconnect();
+      } catch (err: any) {
+        logger.error(`Disconnect on signal failed: ${err.message}`);
+      }
+      logger.info("Migration task cancelled by user.");
+      process.exit(130);
+    };
+
+    process.on("SIGINT", signalHandler);
+    process.on("SIGTERM", signalHandler);
+
     try {
       // 1. Connect to both source and target databases
       logger.info("Connecting to source database...");
-      await this.sourceAdapter.connect();
+      await RetryHandler.retry(
+        () => this.sourceAdapter.connect(),
+        "Source DB Connect",
+        env.maxRetries,
+        env.retryBackoff
+      );
+
       logger.info("Connecting to target database...");
-      await this.targetAdapter.connect();
+      await RetryHandler.retry(
+        () => this.targetAdapter.connect(),
+        "Target DB Connect",
+        env.maxRetries,
+        env.retryBackoff
+      );
 
       // 2. Run precheck validation
-      await PrecheckValidator.run(this.sourceAdapter, this.targetAdapter, this.config);
+      await RetryHandler.retry(
+        () => PrecheckValidator.run(this.sourceAdapter, this.targetAdapter, this.config),
+        "Precheck Validator",
+        env.maxRetries,
+        env.retryBackoff
+      );
 
       // 3. Begin target transaction
       logger.info("Opening transaction on target database...");
-      await this.targetAdapter.beginTransaction();
+      await RetryHandler.retry(
+        () => this.targetAdapter.beginTransaction(),
+        "Begin Transaction",
+        env.maxRetries,
+        env.retryBackoff
+      );
       isTransactionActive = true;
 
       // 4. Execute write mode deletion steps
       if (env.writeMode === "truncateThenInsert") {
         logger.info(`Executing truncate-clean (safe DELETE) on target table: ${task.target.table}`);
-        await this.targetAdapter.deleteRows(task.target.table, []);
+        await RetryHandler.retry(
+          () => this.targetAdapter.deleteRows(task.target.table, []),
+          "Truncate Table",
+          env.maxRetries,
+          env.retryBackoff
+        );
         logger.info("Target table cleared successfully.");
       } else if (env.writeMode === "deleteThenInsert") {
         logger.info(`Resolving delete condition parameters for write mode "${env.writeMode}"...`);
@@ -61,7 +114,12 @@ export class MigrationExecutor {
           task.source.params || []
         );
         logger.info(`Executing scoped DELETE on target table: ${task.target.table}`);
-        await this.targetAdapter.deleteRows(task.target.table, resolvedConditions);
+        await RetryHandler.retry(
+          () => this.targetAdapter.deleteRows(task.target.table, resolvedConditions),
+          "Delete Scoped Rows",
+          env.maxRetries,
+          env.retryBackoff
+        );
         logger.info("Target scoped rows deleted successfully.");
       }
 
@@ -77,15 +135,23 @@ export class MigrationExecutor {
         async (rows) => {
           logger.debug(`Received batch of ${rows.length} rows from source.`);
 
-          let writePromise: Promise<void>;
+          const writeBatchOp = async () => {
+            if (env.writeMode === "upsert") {
+              logger.debug(`Upserting batch of ${rows.length} rows to target table ${task.target.table}...`);
+              await this.targetAdapter.upsertBatch(task.target.table, rows, task.target.upsertKeys || []);
+            } else {
+              logger.debug(`Inserting batch of ${rows.length} rows to target table ${task.target.table}...`);
+              await this.targetAdapter.insertBatch(task.target.table, rows);
+            }
+          };
 
-          if (env.writeMode === "upsert") {
-            logger.debug(`Upserting batch of ${rows.length} rows to target table ${task.target.table}...`);
-            writePromise = this.targetAdapter.upsertBatch(task.target.table, rows, task.target.upsertKeys || []);
-          } else {
-            logger.debug(`Inserting batch of ${rows.length} rows to target table ${task.target.table}...`);
-            writePromise = this.targetAdapter.insertBatch(task.target.table, rows);
-          }
+          // Wrap the batch write operation in the RetryHandler wrapper
+          const writePromise = RetryHandler.retry(
+            writeBatchOp,
+            `Write Batch (${rows.length} rows)`,
+            env.maxRetries,
+            env.retryBackoff
+          );
 
           const wrappedPromise = writePromise
             .then(() => {
@@ -101,7 +167,6 @@ export class MigrationExecutor {
 
           if (activePromises.size >= env.batchConcurrencyLimit) {
             logger.debug(`Concurrency limit reached (${activePromises.size}/${env.batchConcurrencyLimit}). Throttling stream...`);
-            // Wait for at least one active write to finish before returning (applies backpressure to streamQuery)
             await Promise.race(activePromises);
           }
         }
@@ -115,7 +180,12 @@ export class MigrationExecutor {
 
       // 6. Commit transaction
       logger.info("Committing target database transaction...");
-      await this.targetAdapter.commit();
+      await RetryHandler.retry(
+        () => this.targetAdapter.commit(),
+        "Commit Transaction",
+        env.maxRetries,
+        env.retryBackoff
+      );
       isTransactionActive = false;
 
       logger.info(`Migration task completed successfully. Total rows migrated: ${totalMigratedRows}`);
@@ -135,8 +205,12 @@ export class MigrationExecutor {
       
       throw error;
     } finally {
+      // Clean up signal handlers
+      process.off("SIGINT", signalHandler);
+      process.off("SIGTERM", signalHandler);
+
       // 7. Cleanup pool resources
-      logger.info("Disconnecting database adapter pools...");
+      logger.info("Disconnecting database pools...");
       try {
         await this.sourceAdapter.disconnect();
         await this.targetAdapter.disconnect();
