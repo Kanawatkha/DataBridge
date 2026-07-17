@@ -7,7 +7,10 @@
   "scripts": {
     "dev": "bun run src/index.ts",
     "typecheck": "tsc --noEmit",
-    "test": "bun test"
+    "test": "bun test",
+    "build:win": "bun build --compile --target=bun-windows-x64 ./src/index.ts --outfile DataBridge.exe",
+    "build:linux": "bun build --compile --target=bun-linux-x64 ./src/index.ts --outfile DataBridge",
+    "build:all": "bun run build:win && bun run build:linux"
   },
   "dependencies": {
     "mssql": "^12.7.0",
