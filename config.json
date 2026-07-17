@@ -1,22 +1,28 @@
 {
   "configVersion": "1.0",
-  "description": "Migrate mock store items",
+  "description": "ทดสอบย้ายข้อมูลสินค้าสาขา 00515 โดยดึงเฉพาะตัวที่ endDate = 99999999 และเคลียร์ target ตัวเก่าที่ไม่ใช่ 99999999",
   "source": {
-    "database": "store_db",
-    "table": "items",
-    "query": "SELECT * FROM items WHERE store_id = :storeId AND update_date = :updateDate",
+    "database": "master",
+    "table": "item_by_store_sc",
+    "query": "SELECT * FROM item_by_store_sc WHERE STORE_ID = :storeId AND EFFECTIVE_END_DATE = :endDate",
     "params": [
-      { "name": "storeId", "type": "string", "value": "S001" },
-      { "name": "updateDate", "type": "date", "value": "2026-07-17" }
+      { "name": "storeId", "type": "string", "value": "00515" },
+      { "name": "endDate", "type": "string", "value": "99999999" }
     ]
   },
   "target": {
-    "database": "central_db",
-    "table": "items_archive",
+    "database": "master_test",
+    "table": "item_by_store_sc",
     "deleteCondition": {
       "conditions": [
-        { "column": "STORE_ID", "operator": "=", "value": "$ref:storeId" }
+        { "column": "STORE_ID", "operator": "=", "value": "$ref:storeId" },
+        {
+          "column": "EFFECTIVE_END_DATE",
+          "operator": "=",
+          "value": "$ref:endDate"
+        }
       ]
-    }
+    },
+    "upsertKeys": []
   }
 }
