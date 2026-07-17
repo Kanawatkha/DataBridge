@@ -1,0 +1,17 @@
+# Local configuration
+.env
+
+# Dependencies
+node_modules/
+
+# Build outputs
+DataBridge.exe
+DataBridge
+
+# Logs
+logs/
+*.log
+
+# OS generated files
+.DS_Store
+Thumbs.db
